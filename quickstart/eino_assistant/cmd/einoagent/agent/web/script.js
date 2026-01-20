@@ -423,13 +423,29 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
 
                         // Append Output Section
-                        // Try to format output as JSON if possible
-                        let formattedOutput = eventData.output || '(No output)';
+                        let displayOutput = eventData.output || '(No output)';
                         try {
-                            const parsed = JSON.parse(formattedOutput);
-                            formattedOutput = JSON.stringify(parsed, null, 2);
+                            // First, see if the output string itself is JSON (e.g. bash_executor response)
+                            const parsedOutput = JSON.parse(displayOutput);
+
+                            // Special handling for bash_executor style output
+                            if (parsedOutput && typeof parsedOutput === 'object') {
+                                if ('stdout' in parsedOutput || 'stderr' in parsedOutput) {
+                                    // It's a command result, let's format it nicely
+                                    let combined = '';
+                                    if (parsedOutput.stdout) combined += parsedOutput.stdout;
+                                    if (parsedOutput.stderr) combined += `\n[STDERR]\n${parsedOutput.stderr}`;
+                                    if (parsedOutput.exit_code !== undefined && parsedOutput.exit_code !== 0) {
+                                        combined += `\n[Exit Code: ${parsedOutput.exit_code}]`;
+                                    }
+                                    displayOutput = combined.trim();
+                                } else {
+                                    // Other JSON, pretty print
+                                    displayOutput = JSON.stringify(parsedOutput, null, 2);
+                                }
+                            }
                         } catch (e) {
-                            // Leave as string if not JSON
+                            // Not JSON, leave as is
                         }
 
                         const outputDiv = document.createElement('div');
@@ -437,14 +453,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         outputDiv.innerHTML = `
                             <div class="text-xs font-semibold text-gray-500 mb-1.5 text-xs uppercase tracking-wider">Output</div>
                             <div class="bg-white border border-gray-200 rounded p-2.5 overflow-x-auto shadow-inner max-h-60 overflow-y-auto">
-                                <pre class="font-mono text-xs text-gray-600 whitespace-pre-wrap">${formattedOutput}</pre>
+                                <pre class="font-mono text-xs text-gray-600 whitespace-pre-wrap">${displayOutput}</pre>
                             </div>
                         `;
                         activeToolCard.appendChild(outputDiv);
                         activeToolCard = null; // Clear active card
 
                     } else {
-                        // Orphaned end event (shouldn't happen often), render simply
                         console.warn('Orphaned tool end event');
                     }
                 }
