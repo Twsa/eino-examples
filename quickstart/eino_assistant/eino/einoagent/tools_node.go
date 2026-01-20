@@ -19,21 +19,15 @@ package einoagent
 import (
 	"context"
 
-	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/tool/einotool"
+	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/skill"
+	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/tool/bash"
 	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/tool/gitclone"
 	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/tool/open"
-	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/tool/readurl"
 	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/tool/task"
-	"github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2"
 	"github.com/cloudwego/eino/components/tool"
 )
 
 func GetTools(ctx context.Context) ([]tool.BaseTool, error) {
-	einoAssistantTool, err := NewEinoAssistantTool(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	toolTask, err := NewTaskTool(ctx)
 	if err != nil {
 		return nil, err
@@ -49,47 +43,23 @@ func GetTools(ctx context.Context) ([]tool.BaseTool, error) {
 		return nil, err
 	}
 
-	toolDDGSearch, err := NewDDGSearch(ctx, nil)
+	toolBash, err := NewBashTool(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	toolReadURL, err := NewReadURLTool(ctx)
+	toolSkill, err := NewSkillTool(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	return []tool.BaseTool{
-		einoAssistantTool,
 		toolTask,
 		toolOpen,
 		toolGitClone,
-		toolDDGSearch,
-		toolReadURL,
+		toolBash,
+		toolSkill,
 	}, nil
-}
-
-func NewReadURLTool(ctx context.Context) (tool.BaseTool, error) {
-	return readurl.NewReadURLTool(ctx)
-}
-
-func defaultDDGSearchConfig(ctx context.Context) (*duckduckgo.Config, error) {
-	config := &duckduckgo.Config{}
-	return config, nil
-}
-
-func NewDDGSearch(ctx context.Context, config *duckduckgo.Config) (tn tool.BaseTool, err error) {
-	if config == nil {
-		config, err = defaultDDGSearchConfig(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	tn, err = duckduckgo.NewTextSearchTool(ctx, config)
-	if err != nil {
-		return nil, err
-	}
-	return tn, nil
 }
 
 func NewOpenFileTool(ctx context.Context) (tn tool.BaseTool, err error) {
@@ -100,10 +70,14 @@ func NewGitCloneFile(ctx context.Context) (tn tool.BaseTool, err error) {
 	return gitclone.NewGitCloneFile(ctx, nil)
 }
 
-func NewEinoAssistantTool(ctx context.Context) (tn tool.BaseTool, err error) {
-	return einotool.NewEinoAssistantTool(ctx, nil)
-}
-
 func NewTaskTool(ctx context.Context) (tn tool.BaseTool, err error) {
 	return task.NewTaskTool(ctx, nil)
+}
+
+func NewBashTool(ctx context.Context) (tn tool.BaseTool, err error) {
+	return bash.NewBashTool(ctx)
+}
+
+func NewSkillTool(ctx context.Context) (tn tool.BaseTool, err error) {
+	return skill.NewSkillManager(ctx, "skills")
 }
