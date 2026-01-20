@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudwego/eino/schema"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/cloudwego/hertz/pkg/route"
@@ -99,7 +100,8 @@ func HandleChat(ctx context.Context, c *app.RequestContext) {
 
 	log.Printf("[Chat] Starting chat with ID: %s, Message: %s\n", id, message)
 
-	sr, err := RunAgent(ctx, id, message)
+	chatLog := make(chan string, 100)
+	sr, err := RunAgent(ctx, id, message, chatLog)
 	if err != nil {
 		log.Printf("[Chat] Error running agent: %v\n", err)
 		c.JSON(consts.StatusInternalServerError, map[string]string{
@@ -120,45 +122,60 @@ func HandleChat(ctx context.Context, c *app.RequestContext) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
+	// Stream chunks to a channel to avoid blocking the main select loop
+	agentMsg := make(chan *schema.Message, 10)
+	errChan := make(chan error, 1)
+	go func() {
+		defer close(agentMsg)
+		for {
+			msg, err := sr.Recv()
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					errChan <- err
+				}
+				return
+			}
+			agentMsg <- msg
+		}
+	}()
+
 outer:
 	for {
 		select {
 		case <-ctx.Done():
 			log.Printf("[Chat] Context done for chat ID: %s\n", id)
 			return
+		case logMsg, ok := <-chatLog:
+			if !ok {
+				chatLog = nil
+				continue
+			}
+			safeLog := strings.ReplaceAll(logMsg, "\n", "__EINO_NL__")
+			_ = s.Publish(&sse.Event{
+				Data: []byte("__TOOL_STEP__" + safeLog),
+			})
+			ticker.Reset(5 * time.Second)
+		case msg, ok := <-agentMsg:
+			if !ok {
+				break outer
+			}
+			if msg.Content != "" {
+				safeContent := strings.ReplaceAll(msg.Content, "\n", "__EINO_NL__")
+				_ = s.Publish(&sse.Event{
+					Data: []byte(safeContent),
+				})
+				ticker.Reset(5 * time.Second)
+			}
+		case err := <-errChan:
+			log.Printf("[Chat] Error receiving message for chat ID %s: %v\n", id, err)
+			_ = s.Publish(&sse.Event{
+				Data: []byte("\n\n---\n**Error:** " + err.Error()),
+			})
+			break outer
 		case <-ticker.C:
-			// Send heartbeat
 			_ = s.Publish(&sse.Event{
 				Data: []byte("[HB]"),
 			})
-		default:
-			msg, err := sr.Recv()
-			if errors.Is(err, io.EOF) {
-				log.Printf("[Chat] EOF received for chat ID: %s\n", id)
-				break outer
-			}
-			if err != nil {
-				log.Printf("[Chat] Error receiving message for chat ID %s: %v\n", id, err)
-				_ = s.Publish(&sse.Event{
-					Data: []byte("\n\n---\n**Error:** " + err.Error()),
-				})
-				break outer
-			}
-
-			// Only publish if there is content.
-			// In ReAct agents, tool call messages might have empty content.
-			if msg.Content != "" {
-				// Replace newlines with a marker to preserve them through SSE splitting
-				safeContent := strings.ReplaceAll(msg.Content, "\n", "__EINO_NL__")
-				err = s.Publish(&sse.Event{
-					Data: []byte(safeContent),
-				})
-				if err != nil {
-					log.Printf("[Chat] Error publishing message for chat ID %s: %v\n", id, err)
-					break outer
-				}
-				ticker.Reset(5 * time.Second)
-			}
 		}
 	}
 }

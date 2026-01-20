@@ -339,7 +339,118 @@ document.addEventListener('DOMContentLoaded', () => {
             let contentDiv = null;
             let accumulatedContent = '';
             let isFirstChunk = true;
-            let lastRenderTime = 0;
+            let activeToolCard = null;
+
+            function formatJson(str) {
+                try {
+                    const parsed = JSON.parse(str);
+                    return JSON.stringify(parsed, null, 2);
+                } catch (e) {
+                    return str;
+                }
+            }
+
+            function renderToolStep(content) {
+                let eventData = null;
+                try {
+                    eventData = JSON.parse(content);
+                } catch (e) {
+                    console.warn('Non-JSON tool log:', content);
+                }
+
+                if (!eventData) {
+                    // Fallback for non-JSON logs (legacy or plain text)
+                    if (!currentToolStepDiv) {
+                        const messageDiv = document.createElement('div');
+                        messageDiv.className = 'flex items-start gap-3 mb-4';
+                        const avatar = document.createElement('div');
+                        avatar.className = 'w-8 h-8 flex items-center justify-center rounded-full bg-blue-100 flex-shrink-0';
+                        avatar.textContent = '🛠️';
+                        messageDiv.appendChild(avatar);
+
+                        currentToolStepDiv = document.createElement('div');
+                        currentToolStepDiv.className = 'w-full max-w-2xl text-xs text-gray-500 font-mono whitespace-pre-wrap';
+                        messageDiv.appendChild(currentToolStepDiv);
+                        chatMessages.appendChild(messageDiv);
+                    }
+                    currentToolStepDiv.textContent += content + '\n';
+                    return;
+                }
+
+                // Handle JSON Events
+                if (eventData.event === 'start') {
+                    // Create new container for this tool execution
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'flex items-start gap-3 mb-4';
+
+                    const avatar = document.createElement('div');
+                    avatar.className = 'w-8 h-8 flex items-center justify-center rounded-full bg-indigo-100 text-indigo-600 flex-shrink-0 text-sm font-bold border border-indigo-200 shadow-sm';
+                    avatar.textContent = 'T'; // Tool icon
+                    messageDiv.appendChild(avatar);
+
+                    const card = document.createElement('div');
+                    card.className = 'flex-1 max-w-2xl bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden';
+
+                    // Header
+                    card.innerHTML = `
+                        <div class="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="font-medium text-sm text-gray-700">${eventData.name}</span>
+                            </div>
+                            <span class="status-badge px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-600 flex items-center gap-1">
+                                <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span> Running
+                            </span>
+                        </div>
+                        <div class="p-3">
+                            <div class="text-xs font-semibold text-gray-500 mb-1.5 text-xs uppercase tracking-wider">Arguments</div>
+                            <div class="bg-gray-900 rounded p-2.5 overflow-x-auto group relative">
+                                <pre class="font-mono text-xs text-gray-300 whitespace-pre-wrap">${formatJson(eventData.args) || '{}'}</pre>
+                            </div>
+                        </div>
+                    `;
+
+                    messageDiv.appendChild(card);
+                    chatMessages.appendChild(messageDiv);
+                    activeToolCard = card; // Store reference
+
+                } else if (eventData.event === 'end') {
+                    if (activeToolCard) {
+                        // Update Status
+                        const statusBadge = activeToolCard.querySelector('.status-badge');
+                        if (statusBadge) {
+                            statusBadge.className = 'px-2 py-0.5 rounded text-xs font-medium bg-green-50 text-green-600 border border-green-100';
+                            statusBadge.innerHTML = 'Completed';
+                        }
+
+                        // Append Output Section
+                        // Try to format output as JSON if possible
+                        let formattedOutput = eventData.output || '(No output)';
+                        try {
+                            const parsed = JSON.parse(formattedOutput);
+                            formattedOutput = JSON.stringify(parsed, null, 2);
+                        } catch (e) {
+                            // Leave as string if not JSON
+                        }
+
+                        const outputDiv = document.createElement('div');
+                        outputDiv.className = 'border-t border-gray-100 p-3 bg-gray-50/50';
+                        outputDiv.innerHTML = `
+                            <div class="text-xs font-semibold text-gray-500 mb-1.5 text-xs uppercase tracking-wider">Output</div>
+                            <div class="bg-white border border-gray-200 rounded p-2.5 overflow-x-auto shadow-inner max-h-60 overflow-y-auto">
+                                <pre class="font-mono text-xs text-gray-600 whitespace-pre-wrap">${formattedOutput}</pre>
+                            </div>
+                        `;
+                        activeToolCard.appendChild(outputDiv);
+                        activeToolCard = null; // Clear active card
+
+                    } else {
+                        // Orphaned end event (shouldn't happen often), render simply
+                        console.warn('Orphaned tool end event');
+                    }
+                }
+
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
 
             // 创建新的 AbortController
             abortController = new AbortController();
@@ -402,6 +513,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
                             // Replace newline markers
                             rawData = rawData.replaceAll('__EINO_NL__', '\n');
+
+                            if (rawData.startsWith('__TOOL_STEP__')) {
+                                const stepContent = rawData.slice(13);
+                                renderToolStep(stepContent);
+                                continue;
+                            }
+
+                            // If we get here, it's a message chunk, so clear the tool step div
+                            currentToolStepDiv = null;
 
                             if (rawData === '' && !isFirstChunk) {
                                 // Potentially skip empty data lines if not needed, 

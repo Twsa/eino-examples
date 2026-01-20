@@ -36,6 +36,8 @@ import (
 	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/mem"
 )
 
+const ChatLogKey = "chat_log"
+
 var memory = mem.GetDefaultMemory()
 
 var cbHandler callbacks.Handler
@@ -104,7 +106,10 @@ func Init() error {
 	return err
 }
 
-func RunAgent(ctx context.Context, id string, msg string) (*schema.StreamReader[*schema.Message], error) {
+func RunAgent(ctx context.Context, id string, msg string, chatLog chan string) (*schema.StreamReader[*schema.Message], error) {
+	if chatLog != nil {
+		ctx = context.WithValue(ctx, ChatLogKey, chatLog)
+	}
 
 	runner, err := einoagent.BuildEinoAgent(ctx)
 	if err != nil {
@@ -122,7 +127,33 @@ func RunAgent(ctx context.Context, id string, msg string) (*schema.StreamReader[
 		// set session info for apmplus callback
 		ctx = apmplus.SetSession(ctx, apmplus.WithSessionID(id), apmplus.WithUserID("eino-assistant-user"))
 	}
-	sr, err := runner.Stream(ctx, userMessage, compose.WithCallbacks(cbHandler))
+	reqCallback := callbacks.NewHandlerBuilder().
+		OnStartFn(func(ctx context.Context, info *callbacks.RunInfo, input callbacks.CallbackInput) context.Context {
+			if info.Component == "Tool" {
+				chatLog <- fmt.Sprintf("▶️ Executing Tool [%s]", info.Name)
+				if inStr, ok := input.(string); ok {
+					chatLog <- fmt.Sprintf("   Args: %s", inStr)
+				}
+			} else if info.Component == "Skill" || info.Type == "Skill" {
+				chatLog <- fmt.Sprintf("🪄 Activating Skill [%s]", info.Name)
+			}
+			return ctx
+		}).
+		OnEndFn(func(ctx context.Context, info *callbacks.RunInfo, output callbacks.CallbackOutput) context.Context {
+			if info.Component == "Tool" {
+				chatLog <- fmt.Sprintf("✅ Tool [%s] completed", info.Name)
+				if outStr, ok := output.(string); ok {
+					if len(outStr) > 500 {
+						outStr = outStr[:500] + "..."
+					}
+					chatLog <- fmt.Sprintf("   Output: %s", outStr)
+				}
+			}
+			return ctx
+		}).Build()
+
+	// Combine global and request callbacks
+	sr, err := runner.Stream(ctx, userMessage, compose.WithCallbacks(cbHandler, reqCallback))
 	if err != nil {
 		return nil, fmt.Errorf("failed to stream: %w", err)
 	}
@@ -134,6 +165,9 @@ func RunAgent(ctx context.Context, id string, msg string) (*schema.StreamReader[
 		fullMsgs := make([]*schema.Message, 0)
 
 		defer func() {
+			// close chat log channel
+			close(chatLog)
+
 			// close stream if you used it
 			srs[1].Close()
 
@@ -189,6 +223,22 @@ func LogCallback(config *LogCallbackConfig) callbacks.Handler {
 	builder := callbacks.NewHandlerBuilder()
 	builder.OnStartFn(func(ctx context.Context, info *callbacks.RunInfo, input callbacks.CallbackInput) context.Context {
 		fmt.Fprintf(config.Writer, "[view]: start [%s:%s:%s]\n", info.Component, info.Type, info.Name)
+
+		// Check for chat log channel in context
+		val := ctx.Value(ChatLogKey)
+		if val != nil {
+			if cl, ok := val.(chan string); ok {
+				if info.Type == "Tool" {
+					cl <- fmt.Sprintf("▶️ Executing Tool [%s]", info.Name)
+					if inStr, ok := input.(string); ok {
+						cl <- fmt.Sprintf("   Args: %s", inStr)
+					}
+				} else if info.Type == "Skill" {
+					cl <- fmt.Sprintf("🪄 Activating Skill [%s]", info.Name)
+				}
+			}
+		}
+
 		if config.Detail {
 			var b []byte
 			if config.Debug {
@@ -202,6 +252,22 @@ func LogCallback(config *LogCallbackConfig) callbacks.Handler {
 	})
 	builder.OnEndFn(func(ctx context.Context, info *callbacks.RunInfo, output callbacks.CallbackOutput) context.Context {
 		fmt.Fprintf(config.Writer, "[view]: end [%s:%s:%s]\n", info.Component, info.Type, info.Name)
+
+		val := ctx.Value(ChatLogKey)
+		if val != nil {
+			if cl, ok := val.(chan string); ok {
+				if info.Type == "Tool" {
+					cl <- fmt.Sprintf("✅ Tool [%s] completed", info.Name)
+					if outStr, ok := output.(string); ok {
+						if len(outStr) > 500 {
+							outStr = outStr[:500] + "..."
+						}
+						cl <- fmt.Sprintf("   Output: %s", outStr)
+					}
+				}
+			}
+		}
+
 		return ctx
 	})
 	return builder.Build()
