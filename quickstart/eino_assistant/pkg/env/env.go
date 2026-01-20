@@ -24,11 +24,13 @@ import (
 )
 
 func init() {
-	err := godotenv.Load()
+	path := "/home/vagrant/code/AI/agent/eino-examples/quickstart/eino_assistant/.env"
+	err := godotenv.Load(path)
 	if err != nil {
-		log.Fatalf("❌ [ERROR] Error loading .env file: %v", err)
+		log.Printf("[env] Failed to load .env from %s: %v", path, err)
+	} else {
+		log.Printf("[env] Loaded .env from %s", path)
 	}
-
 }
 
 func MustHasEnvs(envs ...string) {

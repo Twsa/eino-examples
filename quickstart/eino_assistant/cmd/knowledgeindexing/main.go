@@ -24,7 +24,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/env"
 	clc "github.com/cloudwego/eino-ext/callbacks/cozeloop"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/coze-dev/cozeloop-go"
@@ -34,11 +33,10 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/eino/knowledgeindexing"
+	_ "github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/env"
 )
 
 func init() {
-	// check some essential envs
-	env.MustHasEnvs("ARK_API_KEY", "ARK_EMBEDDING_MODEL")
 }
 
 func main() {

@@ -26,6 +26,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -116,12 +117,20 @@ func HandleChat(ctx context.Context, c *app.RequestContext) {
 		log.Printf("[Chat] Finished chat with ID: %s\n", id)
 	}()
 
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
 outer:
 	for {
 		select {
 		case <-ctx.Done():
 			log.Printf("[Chat] Context done for chat ID: %s\n", id)
 			return
+		case <-ticker.C:
+			// Send heartbeat
+			_ = s.Publish(&sse.Event{
+				Data: []byte("[HB]"),
+			})
 		default:
 			msg, err := sr.Recv()
 			if errors.Is(err, io.EOF) {
@@ -129,16 +138,26 @@ outer:
 				break outer
 			}
 			if err != nil {
-				log.Printf("[Chat] Error receiving message: %v\n", err)
+				log.Printf("[Chat] Error receiving message for chat ID %s: %v\n", id, err)
+				_ = s.Publish(&sse.Event{
+					Data: []byte("\n\n---\n**Error:** " + err.Error()),
+				})
 				break outer
 			}
 
-			err = s.Publish(&sse.Event{
-				Data: []byte(msg.Content),
-			})
-			if err != nil {
-				log.Printf("[Chat] Error publishing message: %v\n", err)
-				break outer
+			// Only publish if there is content.
+			// In ReAct agents, tool call messages might have empty content.
+			if msg.Content != "" {
+				// Replace newlines with a marker to preserve them through SSE splitting
+				safeContent := strings.ReplaceAll(msg.Content, "\n", "__EINO_NL__")
+				err = s.Publish(&sse.Event{
+					Data: []byte(safeContent),
+				})
+				if err != nil {
+					log.Printf("[Chat] Error publishing message for chat ID %s: %v\n", id, err)
+					break outer
+				}
+				ticker.Reset(5 * time.Second)
 			}
 		}
 	}

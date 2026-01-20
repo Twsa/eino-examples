@@ -22,6 +22,7 @@ import (
 	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/tool/einotool"
 	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/tool/gitclone"
 	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/tool/open"
+	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/tool/readurl"
 	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/tool/task"
 	"github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2"
 	"github.com/cloudwego/eino/components/tool"
@@ -53,13 +54,23 @@ func GetTools(ctx context.Context) ([]tool.BaseTool, error) {
 		return nil, err
 	}
 
+	toolReadURL, err := NewReadURLTool(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	return []tool.BaseTool{
 		einoAssistantTool,
 		toolTask,
 		toolOpen,
 		toolGitClone,
 		toolDDGSearch,
+		toolReadURL,
 	}, nil
+}
+
+func NewReadURLTool(ctx context.Context) (tool.BaseTool, error) {
+	return readurl.NewReadURLTool(ctx)
 }
 
 func defaultDDGSearchConfig(ctx context.Context) (*duckduckgo.Config, error) {

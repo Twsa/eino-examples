@@ -21,11 +21,21 @@ import (
 	"os"
 
 	"github.com/cloudwego/eino-ext/components/model/ark"
+	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 )
 
 func newChatModel(ctx context.Context) (cm model.ChatModel, err error) {
-	// TODO Modify component configuration here.
+	if openAIKey := os.Getenv("OPENAI_API_KEY"); openAIKey != "" {
+		config := &openai.ChatModelConfig{
+			Model:   os.Getenv("OPENAI_MODEL_NAME"),
+			APIKey:  openAIKey,
+			BaseURL: os.Getenv("OPENAI_BASE_URL"),
+		}
+		return openai.NewChatModel(ctx, config)
+	}
+
+	// Default to Ark
 	config := &ark.ChatModelConfig{
 		Model:  os.Getenv("ARK_CHAT_MODEL"),
 		APIKey: os.Getenv("ARK_API_KEY"),

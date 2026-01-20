@@ -32,7 +32,7 @@ import (
 
 	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/cmd/einoagent/agent"
 	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/cmd/einoagent/task"
-	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/env"
+	_ "github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/env"
 )
 
 func init() {
@@ -44,7 +44,9 @@ func init() {
 	}
 
 	// check some essential envs
-	env.MustHasEnvs("ARK_CHAT_MODEL", "ARK_EMBEDDING_MODEL", "ARK_API_KEY")
+	if os.Getenv("ARK_API_KEY") == "" && os.Getenv("OPENAI_API_KEY") == "" {
+		log.Fatal("❌ [ERROR] either ARK_API_KEY or OPENAI_API_KEY is required")
+	}
 }
 
 func main() {

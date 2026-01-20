@@ -38,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 配置 marked
     marked.setOptions({
-        highlight: function(code, language) {
+        highlight: function (code, language) {
             if (Prism.languages[language]) {
                 return Prism.highlight(code, Prism.languages[language], language);
             }
@@ -62,11 +62,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             pre.classList.add('copy-button-added');
-            
+
             const button = document.createElement('button');
             button.className = 'copy-button';
             button.textContent = 'Copy';
-            
+
             button.addEventListener('click', async () => {
                 try {
                     await navigator.clipboard.writeText(code.textContent);
@@ -84,7 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }, 2000);
                 }
             });
-            
+
             pre.insertBefore(button, pre.firstChild);
         });
     }
@@ -95,7 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const target = document.getElementById(button.dataset.target);
             const panel = button.closest('.panel');
             const icon = button.querySelector('svg');
-            
+
             if (target.id === 'task-content') {
                 // Task panel 使用高度控制
                 if (panel.style.flex === '0 1 48px') {
@@ -148,14 +148,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 </svg>
             </button>
         `;
-        
+
         // 添加删除按钮事件
         const deleteButton = historyItem.querySelector('.delete-chat');
         deleteButton.addEventListener('click', (e) => {
             e.stopPropagation();
             deleteConversation(chatId, historyItem);
         });
-        
+
         // 添加点击事件
         historyItem.querySelector('.flex-1').addEventListener('click', () => loadConversation(chatId));
 
@@ -175,23 +175,23 @@ document.addEventListener('DOMContentLoaded', () => {
     function connectLogStream() {
         console.log('Connecting to log stream...');
         const logSource = new EventSource('/agent/api/log');
-        
+
         logSource.onmessage = (event) => {
             const logMessage = event.data;
             const wasAtBottom = isAutoScrollLog;
-            
+
             // 创建新的日志行
             const logLine = document.createElement('div');
             logLine.className = 'log-line';
             logLine.textContent = logMessage;
             logMessages.appendChild(logLine);
-            
+
             // 保持最新的1000行日志
             const maxLogLines = 1000;
             while (logMessages.children.length > maxLogLines) {
                 logMessages.removeChild(logMessages.firstChild);
             }
-            
+
             // 如果之前在底部，则自动滚动到新消息
             if (wasAtBottom) {
                 logMessages.scrollTop = logMessages.scrollHeight;
@@ -201,7 +201,7 @@ document.addEventListener('DOMContentLoaded', () => {
         logSource.onerror = (error) => {
             console.error('Log SSE Error:', error);
             logSource.close();
-            
+
             // 3秒后尝试重连
             console.log('Reconnecting in 3 seconds...');
             setTimeout(connectLogStream, 3000);
@@ -237,7 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(`/agent/api/history?id=${id}`, {
                 method: 'DELETE'
             });
-            
+
             if (response.ok) {
                 element.remove();
                 if (id === chatId) {
@@ -258,16 +258,16 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch(`/agent/api/history?id=${id}`);
             const data = await response.json();
-            
+
             if (data.conversation) {
                 chatId = id;
                 currentConversation = data.conversation;
                 chatMessages.innerHTML = '';
-                
+
                 data.conversation.messages.forEach(msg => {
                     appendMessage(msg.content, msg.role === 'user', false);
                 });
-                
+
                 highlightCurrentChat();
             }
         } catch (error) {
@@ -290,14 +290,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // 消息内容
         const contentDiv = document.createElement('div');
         contentDiv.className = `message markdown-body rounded-lg p-4 ${isUser ? 'bg-gray-100' : 'bg-gray-50'}`;
-        
+
         if (!animate || isUser) {
             contentDiv.innerHTML = marked.parse(processedContent);
             addCopyButtons();
         } else {
             const typingDiv = document.createElement('div');
             contentDiv.appendChild(typingDiv);
-            
+
             new Typed(typingDiv, {
                 strings: [marked.parse(processedContent)],
                 typeSpeed: 20,
@@ -323,7 +323,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         appendMessage(message, true);
         messageInput.value = '';
-        
+
         // 禁用输入框和发送按钮，显示取消按钮
         messageInput.disabled = true;
         sendButton.disabled = true;
@@ -333,7 +333,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             console.log('Starting chat with ID:', chatId);
-            
+
             let hasReceivedMessage = false;
             let currentMessageDiv = null;
             let contentDiv = null;
@@ -359,13 +359,28 @@ document.addEventListener('DOMContentLoaded', () => {
             let buffer = '';  // 用于存储不完整的 SSE 消息
 
             try {
+                // Initial thinking state
+                const thinkingDiv = document.createElement('div');
+                thinkingDiv.className = 'flex items-start gap-3 mb-4 opacity-50';
+                thinkingDiv.id = 'thinking-bubble';
+                thinkingDiv.innerHTML = `
+                    <div class="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 flex-shrink-0">🤖</div>
+                    <div class="message markdown-body rounded-lg p-4 bg-gray-50 italic">Eino is thinking...</div>
+                `;
+                chatMessages.appendChild(thinkingDiv);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+
                 while (true) {
-                    const {value, done} = await reader.read();
+                    const { value, done } = await reader.read();
                     if (done) break;
 
+                    // Remove thinking bubble on first real data
+                    const bubble = document.getElementById('thinking-bubble');
+                    if (bubble) bubble.remove();
+
                     // 解码新的数据块并添加到缓冲区
-                    buffer += decoder.decode(value, {stream: true});
-                    
+                    buffer += decoder.decode(value, { stream: true });
+
                     // 按行分割并处理每一行
                     const lines = buffer.split(/\r\n|\r|\n/);
                     // 保留最后一个可能不完整的行
@@ -374,9 +389,26 @@ document.addEventListener('DOMContentLoaded', () => {
                     for (const line of lines) {
                         // 解析 SSE 格式的行
                         if (line.startsWith('data:')) {
-                            // 保留 data: 后的所有内容，包括前导空格
-                            const rawData = line.slice(5);  // 直接截取 'data:' 后的内容
-                            // console.log(`Raw SSE data: |${rawData}|`);
+                            let rawData = line.slice(5);
+                            // SSE protocol usually adds one space after the colon
+                            if (rawData.startsWith(' ')) {
+                                rawData = rawData.slice(1);
+                            }
+
+                            if (rawData === '[HB]') {
+                                // Skip heartbeats
+                                continue;
+                            }
+
+                            // Replace newline markers
+                            rawData = rawData.replaceAll('__EINO_NL__', '\n');
+
+                            if (rawData === '' && !isFirstChunk) {
+                                // Potentially skip empty data lines if not needed, 
+                                // but with __EINO_NL__ we should be safe.
+                                continue;
+                            }
+
                             hasReceivedMessage = true;
 
                             // 如果是第一个 chunk，创建新的消息框
@@ -395,18 +427,12 @@ document.addEventListener('DOMContentLoaded', () => {
                                 contentDiv.className = 'message markdown-body rounded-lg p-4 bg-gray-50';
                                 messageDiv.appendChild(contentDiv);
                                 chatMessages.appendChild(messageDiv);
-                                
+
                                 currentMessageDiv = contentDiv;
                                 isFirstChunk = false;
                                 accumulatedContent = rawData;
                             } else {
-                                if (rawData === '') {
-                                    // 如果是空数据，添加换行符
-                                    accumulatedContent += '\n';
-                                } else {
-                                    // 否则直接拼接数据
-                                    accumulatedContent += rawData;
-                                }
+                                accumulatedContent += rawData;
                             }
 
                             // 限制渲染频率
@@ -422,11 +448,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 function renderContent() {
+                    if (!currentMessageDiv) return;
                     currentMessageDiv.innerHTML = marked.parse(accumulatedContent);
                     addCopyButtons();
                     chatMessages.scrollTop = chatMessages.scrollHeight;
                     lastRenderTime = Date.now();
                 }
+
+                // Final cleanup of thinking bubble if no message was received
+                const finalBubble = document.getElementById('thinking-bubble');
+                if (finalBubble) finalBubble.remove();
 
                 // 请求完成后，隐藏取消按钮，显示发送按钮
                 cancelButton.classList.add('hidden');
@@ -444,7 +475,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 appendMessage('Error: Failed to send message. Please try again.', false);
             }
-        
+
             abortController = null;
         } finally {
             messageInput.disabled = false;
@@ -471,13 +502,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 chatHistory.innerHTML = ''; // 清空现有历史
                 let firstConversationId = null;
 
-                const loadPromises = data.ids.map(id => 
+                const loadPromises = data.ids.map(id =>
                     fetch(`/agent/api/history?id=${id}`)
                         .then(response => response.json())
                         .then(convData => {
                             if (convData.conversation) {
-                                const firstMessage = convData.conversation.messages.length > 0 
-                                    ? convData.conversation.messages[0].content 
+                                const firstMessage = convData.conversation.messages.length > 0
+                                    ? convData.conversation.messages[0].content
                                     : 'Empty';
 
                                 const historyItem = document.createElement('div');
@@ -494,13 +525,13 @@ document.addEventListener('DOMContentLoaded', () => {
                                         </svg>
                                     </button>
                                 `;
-                                
+
                                 const deleteButton = historyItem.querySelector('.delete-chat');
                                 deleteButton.addEventListener('click', (e) => {
                                     e.stopPropagation();
                                     deleteConversation(id, historyItem);
                                 });
-                                
+
                                 historyItem.querySelector('.flex-1').addEventListener('click', () => loadConversation(id));
                                 chatHistory.appendChild(historyItem);
 

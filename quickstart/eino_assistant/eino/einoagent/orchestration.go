@@ -18,6 +18,9 @@ package einoagent
 
 import (
 	"context"
+	"fmt"
+
+	"strings"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -30,6 +33,7 @@ func BuildEinoAgent(ctx context.Context) (r compose.Runnable[*UserMessage, *sche
 		ReactAgent     = "ReactAgent"
 		RedisRetriever = "RedisRetriever"
 		InputToHistory = "InputToHistory"
+		DocsToStr      = "DocsToStr"
 	)
 	g := compose.NewGraph[*UserMessage, *schema.Message]()
 	_ = g.AddLambdaNode(InputToQuery, compose.InvokableLambdaWithOption(newLambda), compose.WithNodeName("UserMessageToQuery"))
@@ -47,13 +51,25 @@ func BuildEinoAgent(ctx context.Context) (r compose.Runnable[*UserMessage, *sche
 	if err != nil {
 		return nil, err
 	}
-	_ = g.AddRetrieverNode(RedisRetriever, redisRetrieverKeyOfRetriever, compose.WithOutputKey("documents"))
+	_ = g.AddRetrieverNode(RedisRetriever, redisRetrieverKeyOfRetriever, compose.WithNodeName("Retriever"))
+	_ = g.AddLambdaNode(DocsToStr, compose.InvokableLambda(func(ctx context.Context, docs []*schema.Document) (string, error) {
+		var sb strings.Builder
+		for i, doc := range docs {
+			sb.WriteString(fmt.Sprintf("\n==== doc %d start ====\n%s\n==== doc %d end ====\n", i, doc.Content, i))
+		}
+		if sb.Len() == 0 {
+			return "No relevant documents found.", nil
+		}
+		return sb.String(), nil
+	}), compose.WithOutputKey("documents"), compose.WithNodeName("DocumentsToString"))
+
 	_ = g.AddLambdaNode(InputToHistory, compose.InvokableLambdaWithOption(newLambda2), compose.WithNodeName("UserMessageToVariables"))
 	_ = g.AddEdge(compose.START, InputToQuery)
 	_ = g.AddEdge(compose.START, InputToHistory)
 	_ = g.AddEdge(ReactAgent, compose.END)
 	_ = g.AddEdge(InputToQuery, RedisRetriever)
-	_ = g.AddEdge(RedisRetriever, ChatTemplate)
+	_ = g.AddEdge(RedisRetriever, DocsToStr)
+	_ = g.AddEdge(DocsToStr, ChatTemplate)
 	_ = g.AddEdge(InputToHistory, ChatTemplate)
 	_ = g.AddEdge(ChatTemplate, ReactAgent)
 	r, err = g.Compile(ctx, compose.WithGraphName("EinoAgent"), compose.WithNodeTriggerMode(compose.AllPredecessor))
