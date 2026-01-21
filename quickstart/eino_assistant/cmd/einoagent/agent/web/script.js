@@ -11,6 +11,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let chatId = uuidv4();
     let currentConversation = null;
     let abortController = null;  // 用于取消请求
+    let lastRenderTime = 0;  // 用于限制渲染频率
+    let currentToolStepDiv = null;  // 当前工具步骤容器
 
     // 创建取消按钮
     const cancelButton = document.createElement('button');
@@ -253,6 +255,220 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Helper function to escape HTML (attached to window for global access)
+    window.escapeHtml = function(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    };
+
+    // Global renderToolStep function for both loadConversation and sendMessage
+    window.renderToolStep = function(content) {
+        let eventData = null;
+        try {
+            eventData = JSON.parse(content);
+        } catch (e) {
+            console.warn('Non-JSON tool log:', content);
+            return;
+        }
+
+        if (!eventData) return;
+
+        // Handle new JSON event format
+        if (eventData.event === 'tool_start') {
+            // Parse tool name and args
+            const toolName = eventData.name || 'Unknown';
+            let parsedArgs = {};
+            let commandArgs = '';
+
+            // Try to parse args
+            if (eventData.args && eventData.args !== '{}') {
+                try {
+                    parsedArgs = JSON.parse(eventData.args);
+                } catch (e) {
+                    // Args is already a string or invalid JSON
+                }
+            }
+
+            // Format the header based on tool type
+            let headerText = toolName;
+            let subHeaderText = '';
+
+            if ((toolName === 'bash_executor' || toolName === 'Bash') && parsedArgs.command) {
+                // Show complete command in Bash(command) format
+                const cmd = parsedArgs.command;
+                // Truncate very long commands for display
+                const displayCmd = cmd.length > 50 ? cmd.substring(0, 50) + '...' : cmd;
+                headerText = `${toolName}(${displayCmd})`;
+            } else if (Object.keys(parsedArgs).length > 0) {
+                // For other tools, show key args in header
+                const argEntries = Object.entries(parsedArgs).slice(0, 2);
+                const argStrs = argEntries.map(([k, v]) => {
+                    let val = v;
+                    if (typeof v === 'string' && v.length > 30) {
+                        val = v.substring(0, 30) + '...';
+                    }
+                    return `${k}=${val}`;
+                });
+                if (argStrs.length > 0) {
+                    subHeaderText = `  ⎿  ${argStrs.join(' ')}`;
+                }
+            }
+
+            // Create the tool card container
+            const card = document.createElement('div');
+            card.className = 'tool-card my-3 rounded-lg border border-gray-200 bg-white overflow-hidden';
+            card.dataset.toolId = eventData.id;
+
+            // Create header with tool name and status
+            const header = document.createElement('div');
+            header.className = 'flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-100 cursor-pointer';
+            header.innerHTML = `
+                <div class="flex items-center gap-2 overflow-hidden">
+                    <span class="font-semibold text-sm text-gray-700 font-mono">${escapeHtml(headerText)}</span>
+                    <span class="text-xs text-gray-500 font-mono truncate">${escapeHtml(subHeaderText)}</span>
+                </div>
+                <span class="status-badge px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-600 flex items-center gap-1 flex-shrink-0">
+                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span> 运行中
+                </span>
+            `;
+            card.appendChild(header);
+
+            // Create collapsible content area
+            const contentArea = document.createElement('div');
+            contentArea.className = 'tool-content hidden';
+            card.appendChild(contentArea);
+
+            // Add click handler for collapse/expand
+            header.addEventListener('click', () => {
+                contentArea.classList.toggle('hidden');
+            });
+
+            chatMessages.appendChild(card);
+
+        } else if (eventData.event === 'tool_end') {
+            // Find the tool card by ID
+            const toolCard = chatMessages.querySelector(`[data-tool-id="${eventData.id}"]`);
+            if (toolCard) {
+                // Update status
+                const statusBadge = toolCard.querySelector('.status-badge');
+                if (statusBadge) {
+                    statusBadge.className = 'px-2 py-0.5 rounded text-xs font-medium bg-green-50 text-green-600 border border-green-100 flex-shrink-0';
+                    statusBadge.innerHTML = '● 完成';
+                }
+
+                // Add output section (if present)
+                if (eventData.output && eventData.output !== '' && eventData.output !== 'null') {
+                    const contentArea = toolCard.querySelector('.tool-content');
+                    if (contentArea) {
+                        let displayOutput = eventData.output;
+                        let hasError = false;
+
+                        // Parse JSON output if applicable
+                        try {
+                            const parsedOutput = JSON.parse(displayOutput);
+                            if (parsedOutput && typeof parsedOutput === 'object') {
+                                if ('stdout' in parsedOutput || 'stderr' in parsedOutput) {
+                                    let combined = '';
+                                    if (parsedOutput.stdout) combined += parsedOutput.stdout;
+                                    if (parsedOutput.stderr) {
+                                        combined += `\n[STDERR]\n${parsedOutput.stderr}`;
+                                        hasError = true;
+                                    }
+                                    if (parsedOutput.exit_code !== undefined && parsedOutput.exit_code !== 0) {
+                                        combined += `\n[Exit Code: ${parsedOutput.exit_code}]`;
+                                        hasError = true;
+                                    }
+                                    displayOutput = combined.trim();
+                                } else {
+                                    displayOutput = JSON.stringify(parsedOutput, null, 2);
+                                }
+                            }
+                        } catch (e) {
+                            // Not JSON, use as-is
+                        }
+
+                        // Count lines
+                        const lines = displayOutput.split('\n');
+                        const lineCount = lines.length;
+                        const previewLines = lines.slice(0, 5).join('\n');
+                        const hasMore = lineCount > 5;
+
+                        const outputDiv = document.createElement('div');
+                        outputDiv.className = 'p-3 bg-gray-50';
+
+                        // Build output HTML
+                        let outputHtml = '';
+
+                        if (hasError) {
+                            outputHtml += `<div class="text-xs font-semibold text-red-500 mb-2 uppercase tracking-wide">输出</div>`;
+                        } else {
+                            outputHtml += `<div class="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">输出</div>`;
+                        }
+
+                        // Preview section (always shown)
+                        const previewClass = hasError ? 'text-red-700' : 'text-gray-600';
+                        outputHtml += '<div class="output-preview ' + previewClass + ' font-mono whitespace-pre bg-white border border-gray-200 rounded p-3 shadow-inner overflow-x-auto">' +
+                            escapeHtml(previewLines) +
+                            '</div>';
+
+                        // Expandable section for long output
+                        if (hasMore) {
+                            const remainingLines = lines.slice(5).join('\n');
+                            outputHtml += '<div class="output-extra hidden mt-2">' +
+                                '<div class="font-mono whitespace-pre bg-white border border-gray-200 rounded p-3 shadow-inner ' + previewClass + ' overflow-x-auto">' +
+                                escapeHtml(remainingLines) +
+                                '</div>' +
+                                '</div>' +
+                                '<button class="expand-btn mt-2 text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1">' +
+                                '<span>… +' + (lineCount - 5) + ' lines (click to expand)</span>' +
+                                '</button>';
+                        }
+
+                        outputDiv.innerHTML = outputHtml;
+                        contentArea.appendChild(outputDiv);
+
+                        // Add expand/collapse handler
+                        const expandBtn = outputDiv.querySelector('.expand-btn');
+                        if (expandBtn) {
+                            expandBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                const extra = outputDiv.querySelector('.output-extra');
+                                if (extra.classList.contains('hidden')) {
+                                    extra.classList.remove('hidden');
+                                    expandBtn.innerHTML = '<span>▲ collapse</span>';
+                                } else {
+                                    extra.classList.add('hidden');
+                                    expandBtn.innerHTML = `<span>… +${lineCount - 5} lines (click to expand)</span>`;
+                                }
+                            });
+                        }
+                    }
+                }
+
+                // Auto-expand content area if there's output
+                const contentArea = toolCard.querySelector('.tool-content');
+                if (contentArea && contentArea.children.length > 0) {
+                    // Keep expanded by default for better visibility
+                    // contentArea.classList.remove('hidden');
+                }
+            } else {
+                console.warn('Tool card not found for id:', eventData.id);
+            }
+
+        } else if (eventData.event === 'skill_start') {
+            // Create a compact skill indicator
+            const skillDiv = document.createElement('div');
+            skillDiv.className = 'flex items-center gap-2 mb-2 ml-11 text-xs text-gray-500';
+            skillDiv.innerHTML = `
+                <span class="px-2 py-0.5 bg-purple-50 text-purple-600 rounded-full font-medium">🪄 ${eventData.name}</span>
+            `;
+            chatMessages.appendChild(skillDiv);
+        }
+
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
     // 加载对话
     async function loadConversation(id) {
         try {
@@ -265,7 +481,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 chatMessages.innerHTML = '';
 
                 data.conversation.messages.forEach(msg => {
-                    appendMessage(msg.content, msg.role === 'user', false);
+                    if (msg.content && msg.content.startsWith('__TOOL_STEP__')) {
+                        renderToolStep(msg.content.slice(13));
+                    } else {
+                        appendMessage(msg.content, msg.role === 'user', false);
+                    }
                 });
 
                 highlightCurrentChat();
@@ -340,132 +560,6 @@ document.addEventListener('DOMContentLoaded', () => {
             let accumulatedContent = '';
             let isFirstChunk = true;
             let activeToolCard = null;
-
-            function formatJson(str) {
-                try {
-                    const parsed = JSON.parse(str);
-                    return JSON.stringify(parsed, null, 2);
-                } catch (e) {
-                    return str;
-                }
-            }
-
-            function renderToolStep(content) {
-                let eventData = null;
-                try {
-                    eventData = JSON.parse(content);
-                } catch (e) {
-                    console.warn('Non-JSON tool log:', content);
-                }
-
-                if (!eventData) {
-                    // Fallback for non-JSON logs (legacy or plain text)
-                    if (!currentToolStepDiv) {
-                        const messageDiv = document.createElement('div');
-                        messageDiv.className = 'flex items-start gap-3 mb-4';
-                        const avatar = document.createElement('div');
-                        avatar.className = 'w-8 h-8 flex items-center justify-center rounded-full bg-blue-100 flex-shrink-0';
-                        avatar.textContent = '🛠️';
-                        messageDiv.appendChild(avatar);
-
-                        currentToolStepDiv = document.createElement('div');
-                        currentToolStepDiv.className = 'w-full max-w-2xl text-xs text-gray-500 font-mono whitespace-pre-wrap';
-                        messageDiv.appendChild(currentToolStepDiv);
-                        chatMessages.appendChild(messageDiv);
-                    }
-                    currentToolStepDiv.textContent += content + '\n';
-                    return;
-                }
-
-                // Handle JSON Events
-                if (eventData.event === 'start') {
-                    // Create new container for this tool execution
-                    const messageDiv = document.createElement('div');
-                    messageDiv.className = 'flex items-start gap-3 mb-4';
-
-                    const avatar = document.createElement('div');
-                    avatar.className = 'w-8 h-8 flex items-center justify-center rounded-full bg-indigo-100 text-indigo-600 flex-shrink-0 text-sm font-bold border border-indigo-200 shadow-sm';
-                    avatar.textContent = 'T'; // Tool icon
-                    messageDiv.appendChild(avatar);
-
-                    const card = document.createElement('div');
-                    card.className = 'flex-1 max-w-2xl bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden';
-
-                    // Header
-                    card.innerHTML = `
-                        <div class="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <span class="font-medium text-sm text-gray-700">${eventData.name}</span>
-                            </div>
-                            <span class="status-badge px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-600 flex items-center gap-1">
-                                <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span> Running
-                            </span>
-                        </div>
-                        <div class="p-3">
-                            <div class="text-xs font-semibold text-gray-500 mb-1.5 text-xs uppercase tracking-wider">Arguments</div>
-                            <div class="bg-gray-900 rounded p-2.5 overflow-x-auto group relative">
-                                <pre class="font-mono text-xs text-gray-300 whitespace-pre-wrap">${formatJson(eventData.args) || '{}'}</pre>
-                            </div>
-                        </div>
-                    `;
-
-                    messageDiv.appendChild(card);
-                    chatMessages.appendChild(messageDiv);
-                    activeToolCard = card; // Store reference
-
-                } else if (eventData.event === 'end') {
-                    if (activeToolCard) {
-                        // Update Status
-                        const statusBadge = activeToolCard.querySelector('.status-badge');
-                        if (statusBadge) {
-                            statusBadge.className = 'px-2 py-0.5 rounded text-xs font-medium bg-green-50 text-green-600 border border-green-100';
-                            statusBadge.innerHTML = 'Completed';
-                        }
-
-                        // Append Output Section
-                        let displayOutput = eventData.output || '(No output)';
-                        try {
-                            // First, see if the output string itself is JSON (e.g. bash_executor response)
-                            const parsedOutput = JSON.parse(displayOutput);
-
-                            // Special handling for bash_executor style output
-                            if (parsedOutput && typeof parsedOutput === 'object') {
-                                if ('stdout' in parsedOutput || 'stderr' in parsedOutput) {
-                                    // It's a command result, let's format it nicely
-                                    let combined = '';
-                                    if (parsedOutput.stdout) combined += parsedOutput.stdout;
-                                    if (parsedOutput.stderr) combined += `\n[STDERR]\n${parsedOutput.stderr}`;
-                                    if (parsedOutput.exit_code !== undefined && parsedOutput.exit_code !== 0) {
-                                        combined += `\n[Exit Code: ${parsedOutput.exit_code}]`;
-                                    }
-                                    displayOutput = combined.trim();
-                                } else {
-                                    // Other JSON, pretty print
-                                    displayOutput = JSON.stringify(parsedOutput, null, 2);
-                                }
-                            }
-                        } catch (e) {
-                            // Not JSON, leave as is
-                        }
-
-                        const outputDiv = document.createElement('div');
-                        outputDiv.className = 'border-t border-gray-100 p-3 bg-gray-50/50';
-                        outputDiv.innerHTML = `
-                            <div class="text-xs font-semibold text-gray-500 mb-1.5 text-xs uppercase tracking-wider">Output</div>
-                            <div class="bg-white border border-gray-200 rounded p-2.5 overflow-x-auto shadow-inner max-h-60 overflow-y-auto">
-                                <pre class="font-mono text-xs text-gray-600 whitespace-pre-wrap">${displayOutput}</pre>
-                            </div>
-                        `;
-                        activeToolCard.appendChild(outputDiv);
-                        activeToolCard = null; // Clear active card
-
-                    } else {
-                        console.warn('Orphaned tool end event');
-                    }
-                }
-
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-            }
 
             // 创建新的 AbortController
             abortController = new AbortController();

@@ -25,6 +25,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/cloudwego/eino-ext/callbacks/apmplus"
 	"github.com/cloudwego/eino-ext/callbacks/langfuse"
@@ -127,27 +128,73 @@ func RunAgent(ctx context.Context, id string, msg string, chatLog chan string) (
 		// set session info for apmplus callback
 		ctx = apmplus.SetSession(ctx, apmplus.WithSessionID(id), apmplus.WithUserID("eino-assistant-user"))
 	}
+	// Add user query to conversation history BEFORE streaming starts
+	conversation.Append(schema.UserMessage(msg))
+
 	reqCallback := callbacks.NewHandlerBuilder().
 		OnStartFn(func(ctx context.Context, info *callbacks.RunInfo, input callbacks.CallbackInput) context.Context {
 			if info.Component == "Tool" {
-				chatLog <- fmt.Sprintf("▶️ Executing Tool [%s]", info.Name)
+				// 为每个工具调用生成唯一的 ID 并存储在 context 中
+				eventID := fmt.Sprintf("evt_%d", time.Now().UnixNano())
+				ctx = context.WithValue(ctx, "tool_event_id", eventID)
+
+				var argsStr string
 				if inStr, ok := input.(string); ok {
-					chatLog <- fmt.Sprintf("   Args: %s", inStr)
+					argsStr = inStr
 				}
+				// 发送JSON格式的工具开始事件
+				startEvent := map[string]interface{}{
+					"event": "tool_start",
+					"id":    eventID,
+					"name":  info.Name,
+					"args":  argsStr,
+				}
+				eventJSON, _ := json.Marshal(startEvent)
+				eventStr := string(eventJSON)
+				chatLog <- eventStr
+				conversation.Append(&schema.Message{
+					Role:    "assistant",
+					Content: "__TOOL_STEP__" + eventStr,
+				})
 			} else if info.Component == "Skill" || info.Type == "Skill" {
-				chatLog <- fmt.Sprintf("🪄 Activating Skill [%s]", info.Name)
+				skillEvent := map[string]interface{}{
+					"event": "skill_start",
+					"name":  info.Name,
+				}
+				eventJSON, _ := json.Marshal(skillEvent)
+				chatLog <- string(eventJSON)
 			}
 			return ctx
 		}).
 		OnEndFn(func(ctx context.Context, info *callbacks.RunInfo, output callbacks.CallbackOutput) context.Context {
 			if info.Component == "Tool" {
-				chatLog <- fmt.Sprintf("✅ Tool [%s] completed", info.Name)
-				if outStr, ok := output.(string); ok {
-					if len(outStr) > 500 {
-						outStr = outStr[:500] + "..."
+				var outStr string
+				if output != nil {
+					if s, ok := output.(string); ok {
+						outStr = s
 					}
-					chatLog <- fmt.Sprintf("   Output: %s", outStr)
 				}
+				// 从 context 中获取之前生成的 eventID
+				eventID := "unknown"
+				if v := ctx.Value("tool_event_id"); v != nil {
+					if id, ok := v.(string); ok {
+						eventID = id
+					}
+				}
+				// 发送JSON格式的工具结束事件
+				endEvent := map[string]interface{}{
+					"event":  "tool_end",
+					"id":     eventID,
+					"name":   info.Name,
+					"output": outStr,
+				}
+				eventJSON, _ := json.Marshal(endEvent)
+				eventStr := string(eventJSON)
+				chatLog <- eventStr
+				conversation.Append(&schema.Message{
+					Role:    "assistant",
+					Content: "__TOOL_STEP__" + eventStr,
+				})
 			}
 			return ctx
 		}).Build()
@@ -170,9 +217,6 @@ func RunAgent(ctx context.Context, id string, msg string, chatLog chan string) (
 
 			// close stream if you used it
 			srs[1].Close()
-
-			// add user input to history
-			conversation.Append(schema.UserMessage(msg))
 
 			fullMsg, err := schema.ConcatMessages(fullMsgs)
 			if err != nil {
@@ -225,19 +269,19 @@ func LogCallback(config *LogCallbackConfig) callbacks.Handler {
 		fmt.Fprintf(config.Writer, "[view]: start [%s:%s:%s]\n", info.Component, info.Type, info.Name)
 
 		// Check for chat log channel in context
-		val := ctx.Value(ChatLogKey)
-		if val != nil {
-			if cl, ok := val.(chan string); ok {
-				if info.Type == "Tool" {
-					cl <- fmt.Sprintf("▶️ Executing Tool [%s]", info.Name)
-					if inStr, ok := input.(string); ok {
-						cl <- fmt.Sprintf("   Args: %s", inStr)
-					}
-				} else if info.Type == "Skill" {
-					cl <- fmt.Sprintf("🪄 Activating Skill [%s]", info.Name)
-				}
-			}
-		}
+		// val := ctx.Value(ChatLogKey)
+		// if val != nil {
+		// 	if cl, ok := val.(chan string); ok {
+		// 		if info.Type == "Tool" {
+		// 			cl <- fmt.Sprintf("▶️ Executing Tool [%s]", info.Name)
+		// 			if inStr, ok := input.(string); ok {
+		// 				cl <- fmt.Sprintf("   Args: %s", inStr)
+		// 			}
+		// 		} else if info.Type == "Skill" {
+		// 			cl <- fmt.Sprintf("🪄 Activating Skill [%s]", info.Name)
+		// 		}
+		// 	}
+		// }
 
 		if config.Detail {
 			var b []byte
@@ -253,20 +297,20 @@ func LogCallback(config *LogCallbackConfig) callbacks.Handler {
 	builder.OnEndFn(func(ctx context.Context, info *callbacks.RunInfo, output callbacks.CallbackOutput) context.Context {
 		fmt.Fprintf(config.Writer, "[view]: end [%s:%s:%s]\n", info.Component, info.Type, info.Name)
 
-		val := ctx.Value(ChatLogKey)
-		if val != nil {
-			if cl, ok := val.(chan string); ok {
-				if info.Type == "Tool" {
-					cl <- fmt.Sprintf("✅ Tool [%s] completed", info.Name)
-					if outStr, ok := output.(string); ok {
-						if len(outStr) > 500 {
-							outStr = outStr[:500] + "..."
-						}
-						cl <- fmt.Sprintf("   Output: %s", outStr)
-					}
-				}
-			}
-		}
+		// val := ctx.Value(ChatLogKey)
+		// if val != nil {
+		// 	if cl, ok := val.(chan string); ok {
+		// 		if info.Type == "Tool" {
+		// 			cl <- fmt.Sprintf("✅ Tool [%s] completed", info.Name)
+		// 			if outStr, ok := output.(string); ok {
+		// 				if len(outStr) > 500 {
+		// 					outStr = outStr[:500] + "..."
+		// 				}
+		// 				cl <- fmt.Sprintf("   Output: %s", outStr)
+		// 			}
+		// 		}
+		// 	}
+		// }
 
 		return ctx
 	})

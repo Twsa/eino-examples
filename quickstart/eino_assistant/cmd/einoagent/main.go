@@ -31,7 +31,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/cmd/einoagent/agent"
-	"github.com/cloudwego/eino-examples/quickstart/eino_assistant/cmd/einoagent/task"
 	_ "github.com/cloudwego/eino-examples/quickstart/eino_assistant/pkg/env"
 )
 
@@ -76,12 +75,6 @@ func main() {
 		tracer, cfg := hertztracing.NewServerTracer()
 		h = server.Default(server.WithHostPorts(":"+port), tracer)
 		h.Use(LogMiddleware(), hertztracing.ServerMiddleware(cfg))
-	}
-
-	// 注册 task 路由组
-	taskGroup := h.Group("/task")
-	if err := task.BindRoutes(taskGroup); err != nil {
-		log.Fatal("failed to bind task routes:", err)
 	}
 
 	// 注册 agent 路由组

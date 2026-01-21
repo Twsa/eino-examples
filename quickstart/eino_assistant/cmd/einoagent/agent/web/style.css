@@ -233,3 +233,19 @@ body {
 .panel {
     transition: all 0.3s ease-in-out;
 }
+
+/* 工具输出区域的等宽字体样式 */
+.output-preview,
+.output-extra > div {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', 'Monaco', 'Courier New', monospace !important;
+    font-size: 13px !important;
+    line-height: 1.4 !important;
+    letter-spacing: 0 !important;
+    font-variant-ligatures: none !important;
+    font-feature-settings: normal !important;
+}
+
+/* 确保工具卡片中的代码块使用正确的字体 */
+.tool-card .font-mono {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', 'Monaco', 'Courier New', monospace !important;
+}

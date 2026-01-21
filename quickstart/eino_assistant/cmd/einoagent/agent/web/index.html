@@ -53,23 +53,8 @@
 
         <!-- 右侧面板 -->
         <div id="right-panel" class="w-[500px] flex flex-col gap-4 transition-all duration-300">
-            <!-- Task Panel -->
-            <div class="panel flex-[1_1_60%] bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
-                <div class="p-4 bg-gray-800 text-white flex justify-between items-center">
-                    <h3 class="font-semibold">Task List</h3>
-                    <button class="panel-toggle" data-target="task-content">
-                        <svg class="w-5 h-5 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                        </svg>
-                    </button>
-                </div>
-                <div id="task-content" class="flex-1 min-h-0">
-                    <iframe src="/task/" class="w-full h-full border-0"></iframe>
-                </div>
-            </div>
-
             <!-- Log Panel -->
-            <div class="panel flex-[1_1_300px] bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
+            <div class="panel flex-1 bg-white rounded-lg shadow-lg overflow-hidden flex flex-col">
                 <div class="p-4 bg-gray-800 text-white flex justify-between items-center">
                     <h3 class="font-semibold">Log Output</h3>
                     <button class="panel-toggle" data-target="log-content">
