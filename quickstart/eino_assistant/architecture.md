@@ -18,11 +18,10 @@ graph TD
         Hertz["📦 Hertz Web Server"]
         Router{"路由分发"}
         ChatAPI["💬 对话接口 /api/chat"]
-        TaskAPI["📋 任务接口 /task/api"]
+
         
         Hertz --> Router
         Router --> ChatAPI
-        Router --> TaskAPI
     end
 
     subgraph Core_Layer ["🧠 Eino 逻辑编排层"]
@@ -66,7 +65,7 @@ graph TD
     
     %% 样式映射
     class UI_Layer,API_Layer,Core_Layer,Model_Layer,Storage_Layer,Tools_Layer layerStyle;
-    class UI,SSE,Hertz,ChatAPI,TaskAPI,N1,N3,N4 nodeStyle;
+    class UI,SSE,Hertz,ChatAPI,N1,N3,N4 nodeStyle;
     class Graph,GLM activeStyle;
     class Bash,Git,File,Task toolStyle;
     class Mem dbStyle;
